@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "watch2gether",
+  "main": "src/index.ts",
+  "routes": [
+    { "pattern": "watch2gether.appsuite.in", "custom_domain": true }
+  ],
+  "compatibility_date": "2025-01-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "ROOM_DO", "class_name": "RoomDurableObject" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["RoomDurableObject"] }
+  ],
+  "observability": { "enabled": true }
+}
