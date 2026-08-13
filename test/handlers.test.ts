@@ -4,6 +4,7 @@ import { handleControlAccess, handleControlRequest, handlePositionUpdate } from 
 import { handleRtcRelay, handleSourceReady } from "../src/rooms/handlers/signaling";
 import { handleChat } from "../src/rooms/handlers/chat";
 import { handleBan, handleKick, handleRoomSettings } from "../src/rooms/handlers/moderation";
+import { handleSubtitleShare } from "../src/rooms/handlers/subtitles";
 import type { RoomContext } from "../src/rooms/room-context";
 import type { ChatMessageRecord, PeerAttachment, RoomMeta, ServerMessage } from "../src/rooms/types";
 
@@ -25,6 +26,7 @@ function createFakeContext(overrides: Partial<RoomMeta> = {}) {
     voiceEnabled: true,
     emptySince: null,
     everHadSecondPeer: false,
+    sharedSubtitle: null,
     ...overrides
   };
   const registry: Array<{ ws: WebSocket; attachment: PeerAttachment }> = [];
@@ -213,9 +215,11 @@ describe("control handlers", () => {
     const host = connect("host-1", "host");
     const viewer = connect("viewer-1", "viewer");
 
-    handlePositionUpdate(ctx, host.attachment, 123.4, true);
+    handlePositionUpdate(ctx, host.attachment, 123.4, true, 5400);
 
-    expect(viewer.ws.received).toEqual([{ type: "positionSync", position: 123.4, playing: true, serverTime: 1000 }]);
+    expect(viewer.ws.received).toEqual([
+      { type: "positionSync", position: 123.4, playing: true, duration: 5400, serverTime: 1000 }
+    ]);
     expect(host.ws.received).toEqual([]);
   });
 
@@ -224,7 +228,7 @@ describe("control handlers", () => {
     connect("host-1", "host");
     const viewer = connect("viewer-1", "viewer");
 
-    handlePositionUpdate(ctx, viewer.attachment, 5, false);
+    handlePositionUpdate(ctx, viewer.attachment, 5, false, null);
 
     expect(viewer.ws.received).toEqual([]);
   });
@@ -403,5 +407,31 @@ describe("moderation handlers", () => {
     handleRoomSettings(ctx, viewer.attachment, { locked: true });
 
     expect(ctx.meta.locked).toBe(false);
+  });
+});
+
+describe("subtitle sharing", () => {
+  it("lets the host share a subtitle file, broadcast to everyone but the sender", () => {
+    const { ctx, connect } = createFakeContext({ hostClientId: "host-1" });
+    const host = connect("host-1", "host");
+    const viewer = connect("viewer-1", "viewer");
+
+    handleSubtitleShare(ctx, host.attachment, { name: "movie.srt", content: "1\n00:00:01,000 --> 00:00:02,000\nHi\n" });
+
+    expect(ctx.meta.sharedSubtitle).toEqual({ name: "movie.srt", content: "1\n00:00:01,000 --> 00:00:02,000\nHi\n" });
+    expect(viewer.ws.received).toEqual([
+      { type: "subtitleShare", name: "movie.srt", content: "1\n00:00:01,000 --> 00:00:02,000\nHi\n" }
+    ]);
+    expect(host.ws.received).toEqual([]);
+  });
+
+  it("ignores a subtitle share from a non-host", () => {
+    const { ctx, connect } = createFakeContext({ hostClientId: "host-1" });
+    connect("host-1", "host");
+    const viewer = connect("viewer-1", "viewer");
+
+    handleSubtitleShare(ctx, viewer.attachment, { name: "sneaky.srt", content: "nope" });
+
+    expect(ctx.meta.sharedSubtitle).toBeNull();
   });
 });

@@ -10,6 +10,7 @@ import { ModerationPanel } from "./moderation-panel.js";
 import { TabBar } from "./tab-bar.js";
 import { WakeLockController } from "./wake-lock.js";
 import { SyncCorrector } from "./sync-corrector.js";
+import { VideoPlayer } from "./video-player.js";
 
 const el = (id) => document.getElementById(id);
 const lobby = el("lobby");
@@ -29,13 +30,11 @@ const leaveBtn = el("leaveBtn");
 const hostControls = el("hostControls");
 const filePicker = el("filePicker");
 const fileInfo = el("fileInfo");
+const watchOverlay = el("watchOverlay");
 const remoteVideo = el("remoteVideo");
 const enablePlayBtn = el("enablePlayBtn");
 const hostVideo = el("hostVideo");
 const hostOverlay = el("hostOverlay");
-const viewerControls = el("viewerControls");
-const requestPlayBtn = el("requestPlayBtn");
-const requestPauseBtn = el("requestPauseBtn");
 const subtitleControls = el("subtitleControls");
 const subtitlePicker = el("subtitlePicker");
 const subtitleInfo = el("subtitleInfo");
@@ -59,7 +58,7 @@ const tabBar = new TabBar([
 
 const positionClock = new HostPositionClock();
 const hostSubtitles = new SubtitleController(hostOverlay, () => hostVideo.currentTime);
-const viewerSubtitles = new SubtitleController(el("watchOverlay"), () => positionClock.estimate());
+const viewerSubtitles = new SubtitleController(watchOverlay, () => positionClock.estimate());
 hostSubtitles.start();
 viewerSubtitles.start();
 
@@ -76,7 +75,19 @@ let myClientId = null;
 let allowGuestControl = false;
 let currentRoom = null;
 let sourceReady = false;
+let viewerHasManualSubtitle = false; // once a viewer picks their own file, a host share should never silently override it
+let remoteDuration = null;
+let remotePlaying = false;
 const connectedViewerIds = new Set();
+
+const hostPlayer = new VideoPlayer(hostVideo, hostOverlay, { mode: "interactive" });
+const viewerPlayer = new VideoPlayer(remoteVideo, watchOverlay, {
+  mode: "remote",
+  getRemoteProgress: () => ({ position: positionClock.estimate(), duration: remoteDuration, playing: remotePlaying }),
+  onRequestPlay: () => signaling?.send({ type: "controlRequest", action: "play" }),
+  onRequestPause: () => signaling?.send({ type: "controlRequest", action: "pause" }),
+  onRequestSeek: (position) => signaling?.send({ type: "controlRequest", action: "seek", position })
+});
 
 let signaling = null;
 let mesh = null;
@@ -95,10 +106,11 @@ function setConnectionIndicator(state) {
 function updateRoleUi() {
   roleTag.hidden = !isHost;
   hostControls.hidden = !isHost;
-  viewerControls.hidden = isHost;
   subtitleControls.hidden = false;
-  requestPlayBtn.disabled = !allowGuestControl;
-  requestPauseBtn.disabled = !allowGuestControl;
+  // The viewer's incoming-stream box was never hidden for the host, who never
+  // receives a stream of their own broadcast — it just sat there empty.
+  watchOverlay.hidden = isHost;
+  viewerPlayer.setControlAllowed(allowGuestControl);
   // Left hidden here even for viewers: updateSyncBadge() reveals it once there's
   // an actual drift reading, rather than showing an empty badge before then.
   if (isHost) syncBadge.hidden = true;
@@ -115,6 +127,13 @@ function updateSyncBadge(hostPosition) {
   const adjusting = Math.abs(drift) > 0.15;
   syncBadge.classList.toggle("adjusting", adjusting);
   syncBadge.textContent = adjusting ? `sync ${drift > 0 ? "+" : ""}${drift.toFixed(1)}s` : "synced";
+}
+
+/** Applies a subtitle the host shared — but never overrides a viewer's own manual pick for this session. */
+function applySharedSubtitle(subtitle) {
+  if (isHost || !subtitle || viewerHasManualSubtitle) return;
+  viewerSubtitles.loadText(subtitle.content);
+  subtitleInfo.textContent = `${subtitle.name} (shared by host)`;
 }
 
 function applyChatEnabled(enabled) {
@@ -147,6 +166,8 @@ function join(rawCode) {
   roomCodePill.textContent = code;
   setConnectionIndicator("idle");
   setStatus("Connecting…");
+  viewerHasManualSubtitle = false;
+  viewerSubtitles.clear();
 
   signaling = new SignalingClient(wsUrl(code));
   mesh = new WebRtcMesh(signaling);
@@ -193,6 +214,7 @@ function wireSignaling() {
     moderationPanel.applySettings(s);
     moderationPanel.applyGuestControl(allowGuestControl);
     applyChatEnabled(s.chatEnabled);
+    applySharedSubtitle(s.sharedSubtitle);
 
     wakeLock.enable();
 
@@ -249,6 +271,8 @@ function wireSignaling() {
     setStatus(e.detail.ready ? "Streaming." : "No video yet.");
   });
 
+  signaling.addEventListener("subtitleShare", (e) => applySharedSubtitle(e.detail));
+
   signaling.addEventListener("controlRequest", (e) => {
     if (!isHost) return;
     if (e.detail.action === "play") hostVideo.play().catch(() => {});
@@ -257,6 +281,8 @@ function wireSignaling() {
 
   signaling.addEventListener("positionSync", (e) => {
     positionClock.update(e.detail);
+    remoteDuration = e.detail.duration;
+    remotePlaying = e.detail.playing;
     if (isHost) return;
     syncCorrector.onHostPosition(e.detail.position, e.detail.playing);
     updateSyncBadge(e.detail.position);
@@ -310,19 +336,34 @@ function broadcastPosition(force) {
   const now = Date.now();
   if (!force && now - lastPositionBroadcastAt < 1000) return;
   lastPositionBroadcastAt = now;
-  signaling.send({ type: "positionUpdate", position: hostVideo.currentTime, playing: !hostVideo.paused });
+  const duration = Number.isFinite(hostVideo.duration) ? hostVideo.duration : undefined;
+  signaling.send({ type: "positionUpdate", position: hostVideo.currentTime, playing: !hostVideo.paused, duration });
 }
 hostVideo.addEventListener("timeupdate", () => broadcastPosition(false));
 hostVideo.addEventListener("play", () => broadcastPosition(true));
 hostVideo.addEventListener("pause", () => broadcastPosition(true));
 hostVideo.addEventListener("seeked", () => broadcastPosition(true));
 
+const MAX_SHARED_SUBTITLE_BYTES = 300_000; // keep in step with MAX_SUBTITLE_BYTES in src/rooms/validation.ts
+
 subtitlePicker.addEventListener("change", async () => {
   const file = subtitlePicker.files?.[0];
   if (!file) return;
-  const controller = isHost ? hostSubtitles : viewerSubtitles;
-  await controller.loadFile(file);
-  subtitleInfo.textContent = file.name;
+
+  if (isHost) {
+    await hostSubtitles.loadFile(file);
+    subtitleInfo.textContent = file.name;
+    const content = await file.text();
+    if (content.length > MAX_SHARED_SUBTITLE_BYTES) {
+      subtitleInfo.textContent = `${file.name} (too large to share — showing locally only)`;
+      return;
+    }
+    signaling.send({ type: "subtitleShare", name: file.name, content });
+  } else {
+    viewerHasManualSubtitle = true;
+    await viewerSubtitles.loadFile(file);
+    subtitleInfo.textContent = file.name;
+  }
 });
 
 copyLinkBtn.addEventListener("click", async () => {
@@ -330,9 +371,6 @@ copyLinkBtn.addEventListener("click", async () => {
   await navigator.clipboard.writeText(url);
   setStatus("Invite link copied.");
 });
-
-requestPlayBtn.addEventListener("click", () => signaling.send({ type: "controlRequest", action: "play" }));
-requestPauseBtn.addEventListener("click", () => signaling.send({ type: "controlRequest", action: "pause" }));
 
 enablePlayBtn.addEventListener("click", () => {
   remoteVideo.play().then(() => (enablePlayBtn.hidden = true));

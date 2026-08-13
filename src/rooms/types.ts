@@ -33,6 +33,7 @@ export interface RoomMeta {
   emptySince: number | null;
   /** Once true, the room is exempt from the "nobody joined the host within 5 minutes" expiry. */
   everHadSecondPeer: boolean;
+  sharedSubtitle: SharedSubtitle | null;
 }
 
 /** The subset of room settings a host can change after creation, and what gets broadcast on change. */
@@ -69,6 +70,12 @@ export interface ChatMessageRecord {
   sentAt: number;
 }
 
+/** A subtitle file the host has shared with the room. Persisted (see room-durable-object.ts) so it survives a DO eviction and can still be replayed to later joiners. */
+export interface SharedSubtitle {
+  name: string;
+  content: string;
+}
+
 /**
  * The Durable Object relays RTC signaling blindly by targetId — it never
  * looks at the SDP/candidate contents. `purpose` exists purely so two
@@ -88,10 +95,11 @@ export type ClientMessage =
   | { type: "rtcAnswer"; targetId: string; sdp: RtcSessionDescription; purpose: RtcPurpose }
   | { type: "rtcIceCandidate"; targetId: string; candidate: RtcIceCandidate; purpose: RtcPurpose }
   | { type: "chat"; body: string }
-  | { type: "positionUpdate"; position: number; playing: boolean }
+  | { type: "positionUpdate"; position: number; playing: boolean; duration?: number }
   | { type: "kickPeer"; clientId: string }
   | { type: "banPeer"; clientId: string }
   | { type: "roomSettings"; locked?: boolean; maxPeers?: number | null; chatEnabled?: boolean; voiceEnabled?: boolean }
+  | ({ type: "subtitleShare" } & SharedSubtitle)
   | { type: "pong" };
 
 /** Discriminated union of every server -> client message. */
@@ -105,6 +113,7 @@ export type ServerMessage =
       allowGuestControl: boolean;
       hasActiveSource: boolean;
       peers: Array<{ clientId: string; role: PeerRole; name: string }>;
+      sharedSubtitle: SharedSubtitle | null;
     } & RoomSettings)
   | { type: "presence"; peers: Array<{ clientId: string; role: PeerRole; name: string }> }
   | { type: "hostChanged"; hostClientId: string }
@@ -122,9 +131,13 @@ export type ServerMessage =
    * host's current position for local subtitle-cue timing and a scrub-bar
    * readout, since a viewer's own <video> currentTime tracks how long it has
    * been rendering the stream, not the host's absolute position in the file.
+   * `duration` (the host's video length) rides along so a viewer's progress
+   * bar can show real proportions instead of just a growing elapsed-time
+   * counter — null until the host's video metadata has actually loaded.
    */
-  | { type: "positionSync"; position: number; playing: boolean; serverTime: number }
+  | { type: "positionSync"; position: number; playing: boolean; serverTime: number; duration: number | null }
   | ({ type: "roomSettings" } & RoomSettings)
+  | ({ type: "subtitleShare" } & SharedSubtitle)
   | { type: "kicked"; reason: string }
   | { type: "banned"; reason: string }
   | { type: "roomExpired"; reason: string }

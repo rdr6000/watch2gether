@@ -59,6 +59,7 @@ export function announceJoin(ctx: RoomContext, ws: WebSocket, attachment: PeerAt
     allowGuestControl: ctx.meta.allowGuestControl,
     hasActiveSource: ctx.meta.hasActiveSource,
     peers: peerSummaries(ctx),
+    sharedSubtitle: ctx.meta.sharedSubtitle,
     ...roomSettings(ctx)
   });
 

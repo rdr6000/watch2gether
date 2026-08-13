@@ -8,7 +8,9 @@ const ROOM_META_COLUMNS: ColumnDefinition[] = [
   { name: "max_peers", ddl: "INTEGER" },
   { name: "chat_enabled", ddl: "INTEGER NOT NULL DEFAULT 1" },
   { name: "voice_enabled", ddl: "INTEGER NOT NULL DEFAULT 1" },
-  { name: "ever_had_second_peer", ddl: "INTEGER NOT NULL DEFAULT 0" }
+  { name: "ever_had_second_peer", ddl: "INTEGER NOT NULL DEFAULT 0" },
+  { name: "shared_subtitle_name", ddl: "TEXT" },
+  { name: "shared_subtitle_content", ddl: "TEXT" }
 ];
 
 /**

@@ -12,9 +12,16 @@ function parseOptionalBoolean(value: unknown): boolean | undefined {
 const MAX_NAME_LENGTH = 40;
 const MAX_CHAT_LENGTH = 1000;
 const MAX_ROOM_CAPACITY = 200;
+/** Generous for even a long, heavily-formatted .srt/.vtt — real files are rarely above a few hundred KB. */
+const MAX_SUBTITLE_BYTES = 300_000;
 
-/** Checked against the raw string *before* JSON.parse, so an oversized payload never gets parsed at all. */
-export const MAX_RAW_MESSAGE_BYTES = 8 * 1024;
+/**
+ * Checked against the raw string *before* JSON.parse, so an oversized payload
+ * never gets parsed at all. Sized to fit a shared subtitle file (see
+ * MAX_SUBTITLE_BYTES) plus JSON/escaping overhead — every other message type
+ * is far smaller than this in practice, so this is a ceiling, not a target.
+ */
+export const MAX_RAW_MESSAGE_BYTES = 320 * 1024;
 
 /** Hand-rolled runtime validation — kept dependency-free on purpose (see plan: "free/simple to self-host"). */
 export function parseClientMessage(raw: unknown): ClientMessage | null {
@@ -66,7 +73,12 @@ export function parseClientMessage(raw: unknown): ClientMessage | null {
 
     case "positionUpdate":
       if (typeof msg.position !== "number" || !Number.isFinite(msg.position) || typeof msg.playing !== "boolean") return null;
-      return { type: "positionUpdate", position: msg.position, playing: msg.playing };
+      return {
+        type: "positionUpdate",
+        position: msg.position,
+        playing: msg.playing,
+        duration: typeof msg.duration === "number" && Number.isFinite(msg.duration) ? msg.duration : undefined
+      };
 
     case "kickPeer":
       if (typeof msg.clientId !== "string") return null;
@@ -90,6 +102,12 @@ export function parseClientMessage(raw: unknown): ClientMessage | null {
         voiceEnabled: parseOptionalBoolean(msg.voiceEnabled)
       };
     }
+
+    case "subtitleShare":
+      if (typeof msg.name !== "string" || typeof msg.content !== "string" || msg.content.length > MAX_SUBTITLE_BYTES) {
+        return null;
+      }
+      return { type: "subtitleShare", name: msg.name.slice(0, 200), content: msg.content };
 
     case "pong":
       return { type: "pong" };

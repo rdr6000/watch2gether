@@ -19,6 +19,8 @@ interface RoomMetaRow extends Record<string, SqlStorageValue> {
   chat_enabled: number;
   voice_enabled: number;
   ever_had_second_peer: number;
+  shared_subtitle_name: string | null;
+  shared_subtitle_content: string | null;
 }
 
 /** The only shape stored on a socket before it completes a "join" — see fetch(). */
@@ -38,7 +40,8 @@ function defaultMeta(): RoomMeta {
     chatEnabled: true,
     voiceEnabled: true,
     emptySince: null,
-    everHadSecondPeer: false
+    everHadSecondPeer: false,
+    sharedSubtitle: null
   };
 }
 
@@ -77,7 +80,9 @@ export class RoomDurableObject extends DurableObject<Env> {
           max_peers INTEGER,
           chat_enabled INTEGER NOT NULL DEFAULT 1,
           voice_enabled INTEGER NOT NULL DEFAULT 1,
-          ever_had_second_peer INTEGER NOT NULL DEFAULT 0
+          ever_had_second_peer INTEGER NOT NULL DEFAULT 0,
+          shared_subtitle_name TEXT,
+          shared_subtitle_content TEXT
         )
       `);
       migrateRoomMetaTable(this.ctx.storage.sql);
@@ -95,7 +100,11 @@ export class RoomDurableObject extends DurableObject<Env> {
           chatEnabled: Boolean(row.chat_enabled),
           voiceEnabled: Boolean(row.voice_enabled),
           emptySince: null,
-          everHadSecondPeer: Boolean(row.ever_had_second_peer)
+          everHadSecondPeer: Boolean(row.ever_had_second_peer),
+          sharedSubtitle:
+            row.shared_subtitle_name !== null && row.shared_subtitle_content !== null
+              ? { name: row.shared_subtitle_name, content: row.shared_subtitle_content }
+              : null
         };
       }
     });
@@ -243,8 +252,8 @@ export class RoomDurableObject extends DurableObject<Env> {
 
   private saveMeta(): void {
     this.ctx.storage.sql.exec(
-      `INSERT INTO room_meta (id, room_id, host_client_id, allow_guest_control, created_at, locked, max_peers, chat_enabled, voice_enabled, ever_had_second_peer)
-       VALUES (0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO room_meta (id, room_id, host_client_id, allow_guest_control, created_at, locked, max_peers, chat_enabled, voice_enabled, ever_had_second_peer, shared_subtitle_name, shared_subtitle_content)
+       VALUES (0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          room_id = excluded.room_id,
          host_client_id = excluded.host_client_id,
@@ -253,7 +262,9 @@ export class RoomDurableObject extends DurableObject<Env> {
          max_peers = excluded.max_peers,
          chat_enabled = excluded.chat_enabled,
          voice_enabled = excluded.voice_enabled,
-         ever_had_second_peer = excluded.ever_had_second_peer`,
+         ever_had_second_peer = excluded.ever_had_second_peer,
+         shared_subtitle_name = excluded.shared_subtitle_name,
+         shared_subtitle_content = excluded.shared_subtitle_content`,
       this.meta.roomId,
       this.meta.hostClientId,
       this.meta.allowGuestControl ? 1 : 0,
@@ -262,7 +273,9 @@ export class RoomDurableObject extends DurableObject<Env> {
       this.meta.maxPeers,
       this.meta.chatEnabled ? 1 : 0,
       this.meta.voiceEnabled ? 1 : 0,
-      this.meta.everHadSecondPeer ? 1 : 0
+      this.meta.everHadSecondPeer ? 1 : 0,
+      this.meta.sharedSubtitle?.name ?? null,
+      this.meta.sharedSubtitle?.content ?? null
     );
   }
 

@@ -15,14 +15,19 @@ relays signaling messages, it never touches the video itself.
   (`captureStream()`), and sends it directly to each viewer over WebRTC. There
   is no upload, no storage, no per-GB cost.
 - **Playback control** always happens on the host's actual video element —
-  viewers with permission send a play/pause *request* that the host executes,
-  which then naturally propagates to everyone through the live stream.
+  viewers with permission send a play/pause/seek *request* that the host
+  executes, which then naturally propagates to everyone through the live
+  stream. Both host and viewer get a custom control bar (`video-player.js`) —
+  scrubbable progress, volume, fullscreen, picture-in-picture, and (host only)
+  playback speed — instead of the browser's native `<video controls>`.
 - **Chat** and **voice** run over the same WebSocket/WebRTC connections —
   chat is relayed and kept as a capped history per room; voice is a full mesh
   of small audio-only peer connections between everyone present.
-- **Subtitles** are loaded locally by each viewer (`.srt`/`.vtt`) and
-  rendered as an overlay timed against the host's broadcast position — never
-  uploaded anywhere.
+- **Subtitles**: when the host loads a `.srt`/`.vtt` file it's shared with
+  everyone automatically (relayed through the room, capped at ~300KB, never
+  stored anywhere else) — rendered as an overlay timed against the host's
+  broadcast position. A viewer can still load their own local file instead,
+  which always takes priority over whatever the host shares.
 - **Moderation** is host-only: lock the room against new joiners, cap max
   participants, turn chat or voice off for everyone, and kick or ban
   individual people. A kick just disconnects them (they can rejoin); a ban

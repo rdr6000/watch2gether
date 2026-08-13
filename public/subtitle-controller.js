@@ -19,7 +19,10 @@ export class SubtitleController {
   }
 
   async loadFile(file) {
-    const text = await file.text();
+    this.loadText(await file.text());
+  }
+
+  loadText(text) {
     this.#overlay.setCues(parseSubtitles(text));
   }
 

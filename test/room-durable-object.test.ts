@@ -89,6 +89,41 @@ describe("RoomDurableObject", () => {
     expect(history.messages).toMatchObject([{ senderName: "Host", body: "hello from host" }]);
   });
 
+  it("broadcasts a host's shared subtitle and replays it to a later joiner", async () => {
+    const room = "INTGRTNSUB";
+    const { ws: hostWs } = await joinRoom(room, "Host");
+    const { ws: viewerWs } = await joinRoom(room, "Viewer");
+
+    const received = nextMessage(viewerWs, (m) => m.type === "subtitleShare");
+    hostWs.send(JSON.stringify({ type: "subtitleShare", name: "movie.srt", content: "1\n00:00:01,000 --> 00:00:02,000\nHi\n" }));
+    expect((await received).name).toBe("movie.srt");
+
+    const { state: laterState } = await joinRoom(room, "LateJoiner");
+    expect(laterState.sharedSubtitle).toEqual({ name: "movie.srt", content: "1\n00:00:01,000 --> 00:00:02,000\nHi\n" });
+  });
+
+  it("regression: persists a shared subtitle to SQLite so it survives a Durable Object eviction", async () => {
+    // Caught live: the in-memory-only version of this feature passed every
+    // test above (same DO instance, never evicted mid-test) but silently lost
+    // the subtitle for any real joiner arriving after Miniflare/production
+    // evicted and reconstructed the DO — because the handler never called
+    // saveMeta(). Assert the actual row, not just same-instance behavior.
+    const room = "INTGRTNSUBPERSIST";
+    const { ws: hostWs } = await joinRoom(room, "Host");
+    hostWs.send(JSON.stringify({ type: "subtitleShare", name: "movie.srt", content: "hello subs" }));
+    await new Promise((resolve) => setTimeout(resolve, 50)); // let the DO finish handling the message
+
+    const stub = env.ROOM_DO.getByName(room);
+    await runInDurableObject(stub, async (_instance: RoomDurableObject, state: DurableObjectState) => {
+      const rows = state.storage.sql
+        .exec<{ shared_subtitle_name: string | null; shared_subtitle_content: string | null }>(
+          "SELECT shared_subtitle_name, shared_subtitle_content FROM room_meta WHERE id = 0"
+        )
+        .toArray();
+      expect(rows[0]).toEqual({ shared_subtitle_name: "movie.srt", shared_subtitle_content: "hello subs" });
+    });
+  });
+
   it("promotes the next peer to host when the host disconnects", async () => {
     const room = "INTGRTN3";
     const { ws: hostWs } = await joinRoom(room, "Host");
@@ -263,12 +298,13 @@ describe("RoomDurableObject", () => {
   it("rejects an oversized raw message instead of parsing it", async () => {
     const room = "INTGRTN6";
     const { ws } = await joinRoom(room, "Host");
-    const tooLarge = JSON.stringify({ type: "chat", body: "x".repeat(20_000) });
+    const tooLarge = JSON.stringify({ type: "chat", body: "x".repeat(400_000) });
 
     // Asserting on the absence of a response would be flaky; instead confirm the
-    // payload is actually over the guard's threshold, then prove the connection
+    // payload is actually over the guard's threshold (raised to fit a shared
+    // subtitle file — see MAX_RAW_MESSAGE_BYTES), then prove the connection
     // survives sending it (a smaller follow-up message still gets echoed back).
-    expect(tooLarge.length).toBeGreaterThan(8 * 1024);
+    expect(tooLarge.length).toBeGreaterThan(320 * 1024);
     ws.send(tooLarge);
     ws.send(JSON.stringify({ type: "chat", body: "still alive" }));
     const echoed = await nextMessage(ws, (m) => m.type === "chat");

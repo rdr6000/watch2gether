@@ -37,7 +37,16 @@ export function handleControlRequest(
 }
 
 /** Host broadcasts its current position periodically so viewers can calibrate subtitle timing (see types.ts). */
-export function handlePositionUpdate(ctx: RoomContext, from: PeerAttachment, position: number, playing: boolean): void {
+export function handlePositionUpdate(
+  ctx: RoomContext,
+  from: PeerAttachment,
+  position: number,
+  playing: boolean,
+  duration: number | null
+): void {
   if (!isHost(ctx, from.clientId)) return;
-  ctx.broadcast({ type: "positionSync", position, playing, serverTime: ctx.now() }, ctx.peerByClientId(from.clientId)?.ws);
+  ctx.broadcast(
+    { type: "positionSync", position, playing, duration, serverTime: ctx.now() },
+    ctx.peerByClientId(from.clientId)?.ws
+  );
 }

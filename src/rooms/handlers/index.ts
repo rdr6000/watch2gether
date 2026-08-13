@@ -4,6 +4,7 @@ import { handleControlAccess, handleControlRequest, handlePositionUpdate } from 
 import { handleChat } from "./chat";
 import { handleRtcRelay, handleSourceReady } from "./signaling";
 import { handleBan, handleKick, handleRoomSettings } from "./moderation";
+import { handleSubtitleShare } from "./subtitles";
 
 export { announceJoin, assignRole, checkJoinAllowed, handleLeave } from "./presence";
 
@@ -32,7 +33,7 @@ export function dispatchMessage(ctx: RoomContext, from: PeerAttachment, msg: Cli
       handleChat(ctx, from, msg.body);
       return;
     case "positionUpdate":
-      handlePositionUpdate(ctx, from, msg.position, msg.playing);
+      handlePositionUpdate(ctx, from, msg.position, msg.playing, msg.duration ?? null);
       return;
     case "kickPeer":
       handleKick(ctx, from, msg.clientId);
@@ -42,6 +43,9 @@ export function dispatchMessage(ctx: RoomContext, from: PeerAttachment, msg: Cli
       return;
     case "roomSettings":
       handleRoomSettings(ctx, from, msg);
+      return;
+    case "subtitleShare":
+      handleSubtitleShare(ctx, from, msg);
       return;
     case "pong":
       return; // liveness only — lastSeenAt is already refreshed by the caller for every message
